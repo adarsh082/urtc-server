@@ -1,0 +1,20 @@
+.env
+.env.local
+Oauth2_Data.txt
+
+# Editor and OS files
+.vs/
+.vscode/
+Thumbs.db
+
+# Go build and cache output
+.gocache/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Packaging output
+dist/
+*.zip
