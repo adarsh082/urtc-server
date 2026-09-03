@@ -20,12 +20,20 @@ namespace URTC.Editor
         {
             try
             {
-                // If a valid git repo already exists here, just open it —
-                // don't re-init, which would create a nested .git and cause conflicts.
-                if (Repository.IsValid(path))
+                // Repository.Discover traverses parent directories to find the .git folder.
+                // This handles the case where the Unity project is inside a cloned repo
+                // (e.g. urtc-server/frontend/) where .git is at the parent level.
+                string discovered = null;
+                try { discovered = Repository.Discover(path); } catch { }
+
+                if (!string.IsNullOrEmpty(discovered))
                 {
-                    RepositoryPath = path;
-                    Debug.Log($"[GitHelper] Opened existing repository at: {path}");
+                    // Get the actual working directory root (not the .git dir path)
+                    using (var tempRepo = new Repository(discovered))
+                    {
+                        RepositoryPath = tempRepo.Info.WorkingDirectory;
+                    }
+                    Debug.Log($"[GitHelper] Discovered existing repository at: {RepositoryPath}");
                 }
                 else
                 {
@@ -267,8 +275,6 @@ namespace URTC.Editor
                         Debug.Log($"[GitHelper] Checking out branch {branchName} (force)");
                         try
                         {
-                            // Force checkout — overwrites local conflicting files.
-                            // For a collaborator this is correct: they want the owner's files.
                             var checkoutOptions = new CheckoutOptions
                             {
                                 CheckoutModifiers = CheckoutModifiers.Force
@@ -277,9 +283,23 @@ namespace URTC.Editor
                         }
                         catch (Exception checkoutEx)
                         {
-                            Debug.LogError($"[GitHelper] Checkout failed: {checkoutEx.Message}");
-                            return false;
+                            // "Access is denied" means a DLL (like git2-3f4182d.dll) is locked
+                            // by the running Unity process — safe to ignore and continue pull.
+                            if (checkoutEx.Message.Contains("Access is denied") ||
+                                checkoutEx.Message.Contains("access is denied"))
+                            {
+                                Debug.LogWarning($"[GitHelper] Checkout skipped a locked file (DLL in use by Unity): {checkoutEx.Message}. Continuing pull...");
+                            }
+                            else
+                            {
+                                Debug.LogError($"[GitHelper] Checkout failed: {checkoutEx.Message}");
+                                return false;
+                            }
                         }
+                    }
+                    else
+                    {
+                        Debug.Log($"[GitHelper] Already on branch {branchName}, skipping checkout.");
                     }
 
                     Debug.Log("[GitHelper] Executing Pull/Merge...");
