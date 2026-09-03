@@ -20,8 +20,18 @@ namespace URTC.Editor
         {
             try
             {
-                Debug.Log($"[GitHelper] Initializing/Opening repository at: {path}");
-                RepositoryPath = Repository.Init(path);
+                // If a valid git repo already exists here, just open it —
+                // don't re-init, which would create a nested .git and cause conflicts.
+                if (Repository.IsValid(path))
+                {
+                    RepositoryPath = path;
+                    Debug.Log($"[GitHelper] Opened existing repository at: {path}");
+                }
+                else
+                {
+                    RepositoryPath = Repository.Init(path);
+                    Debug.Log($"[GitHelper] Initialized new repository at: {RepositoryPath}");
+                }
                 return true;
             }
             catch (Exception ex)
@@ -212,16 +222,20 @@ namespace URTC.Editor
 
                 using (var repo = new Repository(RepositoryPath))
                 {
+                    var fetchOptions = new FetchOptions
+                    {
+                        CredentialsProvider = (url, user, cred) =>
+                            new UsernamePasswordCredentials { Username = username, Password = password }
+                    };
+
                     var pullOptions = new PullOptions
                     {
-                        FetchOptions = new FetchOptions
-                        {
-                            CredentialsProvider = (url, user, cred) =>
-                                new UsernamePasswordCredentials { Username = username, Password = password }
-                        },
+                        FetchOptions = fetchOptions,
                         MergeOptions = new MergeOptions
                         {
-                            FileConflictStrategy = CheckoutFileConflictStrategy.Normal
+                            // Always take remote (owner's) version on conflict —
+                            // correct for a collaborator who is pulling updates.
+                            FileConflictStrategy = CheckoutFileConflictStrategy.Theirs
                         }
                     };
 
@@ -229,7 +243,7 @@ namespace URTC.Editor
                     if (localBranch == null)
                     {
                         Debug.Log($"[GitHelper] Local branch {branchName} not found. Fetching from remote...");
-                        repo.Network.Fetch(remoteName, new string[] { branchName }, pullOptions.FetchOptions, null);
+                        repo.Network.Fetch(remoteName, new string[] { branchName }, fetchOptions, null);
                         
                         var remoteBranch = repo.Branches[$"{remoteName}/{branchName}"];
                         if (remoteBranch != null)
@@ -250,14 +264,20 @@ namespace URTC.Editor
 
                     if (repo.Head.FriendlyName != branchName)
                     {
-                        Debug.Log($"[GitHelper] Checking out branch {branchName}");
+                        Debug.Log($"[GitHelper] Checking out branch {branchName} (force)");
                         try
                         {
-                            Commands.Checkout(repo, branchName);
+                            // Force checkout — overwrites local conflicting files.
+                            // For a collaborator this is correct: they want the owner's files.
+                            var checkoutOptions = new CheckoutOptions
+                            {
+                                CheckoutModifiers = CheckoutModifiers.Force
+                            };
+                            Commands.Checkout(repo, repo.Branches[branchName], checkoutOptions);
                         }
                         catch (Exception checkoutEx)
                         {
-                            Debug.LogError($"[GitHelper] Checkout failed. Your local files were left unchanged: {checkoutEx.Message}");
+                            Debug.LogError($"[GitHelper] Checkout failed: {checkoutEx.Message}");
                             return false;
                         }
                     }
@@ -271,7 +291,7 @@ namespace URTC.Editor
                     }
                     catch (Exception pullEx)
                     {
-                        Debug.LogError($"[GitHelper] Pull stopped because it needs manual conflict resolution. Your local files were left unchanged: {pullEx.Message}");
+                        Debug.LogError($"[GitHelper] Pull failed: {pullEx.Message}");
                         return false;
                     }
                     return true;
