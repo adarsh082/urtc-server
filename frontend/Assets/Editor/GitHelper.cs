@@ -20,23 +20,40 @@ namespace URTC.Editor
         {
             try
             {
-                // Repository.Discover traverses parent directories to find the .git folder.
-                // This handles the case where the Unity project is inside a cloned repo
-                // (e.g. urtc-server/frontend/) where .git is at the parent level.
+                // Repository.Discover traverses parent directories to find a .git folder.
                 string discovered = null;
                 try { discovered = Repository.Discover(path); } catch { }
 
                 if (!string.IsNullOrEmpty(discovered))
                 {
-                    // Get the actual working directory root (not the .git dir path)
                     using (var tempRepo = new Repository(discovered))
                     {
-                        RepositoryPath = tempRepo.Info.WorkingDirectory;
+                        // Normalize both paths for comparison
+                        string repoRoot = tempRepo.Info.WorkingDirectory
+                            .Replace("\\", "/").TrimEnd('/');
+                        string projectRoot = path
+                            .Replace("\\", "/").TrimEnd('/');
+
+                        if (string.Equals(repoRoot, projectRoot, StringComparison.OrdinalIgnoreCase))
+                        {
+                            // The git root IS our project folder — open it directly.
+                            RepositoryPath = tempRepo.Info.WorkingDirectory;
+                            Debug.Log($"[GitHelper] Opened existing repository at: {RepositoryPath}");
+                        }
+                        else
+                        {
+                            // The git root is a PARENT of our project folder
+                            // (e.g. urtc-server/ when project is urtc-server/frontend/).
+                            // Init a new repo specifically at our project path so
+                            // pulled files land in the right place.
+                            RepositoryPath = Repository.Init(path);
+                            Debug.Log($"[GitHelper] Initialized new repository at project path: {RepositoryPath}");
+                        }
                     }
-                    Debug.Log($"[GitHelper] Discovered existing repository at: {RepositoryPath}");
                 }
                 else
                 {
+                    // No existing git repo found anywhere — init fresh.
                     RepositoryPath = Repository.Init(path);
                     Debug.Log($"[GitHelper] Initialized new repository at: {RepositoryPath}");
                 }
